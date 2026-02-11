@@ -1,0 +1,7 @@
+{
+    "gallery_path": "E:/相似图片检测/中台数据",
+    "model_name": "ViT-H-14",
+    "pretrained": "laion2b_s32b_b79k",
+    "device": "cuda",
+    "index_path": "./data/index.csv"
+}

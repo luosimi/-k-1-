@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Similar Image Search</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drag-active {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-6xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Similar Image Search Tool</h1>
+            <p class="text-gray-600">Find visually similar images in your local gallery</p>
+        </header>
+
+        <!-- Configuration & Sync -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <h2 class="text-xl font-semibold mb-4">Settings</h2>
+            <div class="flex gap-4 items-end mb-4">
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Gallery Path</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="galleryPath" value="{{ config.gallery_path }}" 
+                               class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button onclick="browseFolder()" class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-2 rounded-md border border-gray-300 transition" title="Select Folder">
+                            📂 Browse
+                        </button>
+                    </div>
+                </div>
+                <button onclick="saveConfig()" class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-2 rounded-md transition">
+                    Save Path
+                </button>
+                <button onclick="startSync()" id="syncBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md transition flex items-center gap-2">
+                    <span>Start Sync</span>
+                </button>
+            </div>
+
+            <!-- Device Info -->
+            <div id="deviceInfo" class="text-sm text-gray-500 flex items-center gap-2">
+                <span class="inline-block w-2 h-2 rounded-full bg-gray-400" id="deviceStatusDot"></span>
+                <span id="deviceText">Checking device...</span>
+            </div>
+            
+            <!-- Sync Status -->
+            <div id="syncStatus" class="hidden bg-gray-50 p-4 rounded-md border border-gray-200">
+                <div class="flex justify-between mb-1">
+                    <span id="syncMessage" class="text-sm text-gray-700">Syncing...</span>
+                    <span id="syncPercent" class="text-sm font-medium text-gray-700">0%</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="progressBar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Search Area -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+            <h2 class="text-xl font-semibold mb-4">Search</h2>
+            
+            <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center cursor-pointer transition">
+                <input type="file" id="fileInput" class="hidden" accept="image/*">
+                <div class="space-y-2">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <p class="text-gray-600">Click or drag and drop an image here to search</p>
+                </div>
+                <img id="previewImage" class="hidden mx-auto max-h-64 mt-4 rounded shadow" />
+            </div>
+        </div>
+
+        <!-- Results -->
+        <div id="resultsArea" class="hidden">
+            <h2 class="text-xl font-semibold mb-4">Results</h2>
+            <div id="resultsGrid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                <!-- Items will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Config & Sync ---
+        async function browseFolder() {
+            try {
+                const btn = event.currentTarget;
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = '...';
+                
+                const res = await fetch('/api/select-folder', {method: 'POST'});
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    document.getElementById('galleryPath').value = data.path;
+                    // Auto save config after selection
+                    await saveConfig();
+                } else if (data.status === 'error') {
+                    alert(data.message);
+                }
+                
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            } catch (e) {
+                console.error(e);
+                alert('Failed to open folder dialog');
+            }
+        }
+
+        async function saveConfig() {
+            const path = document.getElementById('galleryPath').value;
+            const res = await fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({gallery_path: path})
+            });
+            const data = await res.json();
+            alert(data.message);
+        }
+
+        async function startSync() {
+            const res = await fetch('/api/sync', {method: 'POST'});
+            const data = await res.json();
+            if (data.status === 'success') {
+                pollStatus();
+            } else {
+                alert(data.message);
+            }
+        }
+
+        let polling = false;
+        
+        // Initial check
+        fetchStatus();
+
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                const status = await res.json();
+                updateUI(status);
+            } catch (e) {
+                console.error("Failed to fetch status", e);
+            }
+        }
+
+        function updateUI(status) {
+            // Update Device Info
+            const deviceText = document.getElementById('deviceText');
+            const deviceDot = document.getElementById('deviceStatusDot');
+            
+            if (status.device_info) {
+                const info = status.device_info;
+                if (info.device === 'cuda') {
+                    deviceText.textContent = `Running on GPU: ${info.name} (${info.vram || ''})`;
+                    deviceDot.className = "inline-block w-2 h-2 rounded-full bg-green-500";
+                } else {
+                    deviceText.textContent = `Running on CPU (No GPU detected)`;
+                    deviceDot.className = "inline-block w-2 h-2 rounded-full bg-yellow-500";
+                }
+            }
+
+            // Update Sync Status
+            const statusDiv = document.getElementById('syncStatus');
+            const msgEl = document.getElementById('syncMessage');
+            const barEl = document.getElementById('progressBar');
+            const percentEl = document.getElementById('syncPercent');
+            const btn = document.getElementById('syncBtn');
+            
+            if (status.is_syncing) {
+                statusDiv.classList.remove('hidden');
+                btn.disabled = true;
+                btn.classList.add('opacity-50');
+                
+                msgEl.textContent = status.message;
+                if (status.total > 0) {
+                    const pct = Math.round((status.progress / status.total) * 100);
+                    barEl.style.width = pct + '%';
+                    percentEl.textContent = pct + '%';
+                }
+                
+                // If syncing and not polling, start polling
+                if (!polling) {
+                    pollStatus();
+                }
+            } else {
+                 // Only hide if we were syncing before or if message indicates completion
+                 if (status.message === 'Sync completed.') {
+                     msgEl.textContent = status.message;
+                     barEl.style.width = '100%';
+                     percentEl.textContent = '100%';
+                 }
+            }
+        }
+
+        async function pollStatus() {
+            if (polling) return;
+            polling = true;
+            
+            const interval = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/status');
+                    const status = await res.json();
+                    
+                    updateUI(status);
+
+                    if (!status.is_syncing) {
+                        clearInterval(interval);
+                        polling = false;
+                        document.getElementById('syncBtn').disabled = false;
+                        document.getElementById('syncBtn').classList.remove('opacity-50');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    polling = false;
+                    clearInterval(interval);
+                }
+            }, 1000);
+        }
+
+        // --- Drag & Drop Search ---
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const previewImage = document.getElementById('previewImage');
+        
+        dropZone.addEventListener('click', () => fileInput.click());
+        
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+        
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-active'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-active'), false);
+        });
+
+        dropZone.addEventListener('drop', handleDrop, false);
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            if (files.length > 0) {
+                const file = files[0];
+                if (!file.type.startsWith('image/')) return;
+                
+                // Preview
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    previewImage.src = e.target.result;
+                    previewImage.classList.remove('hidden');
+                }
+                reader.readAsDataURL(file);
+
+                // Search
+                performSearch(file);
+            }
+        }
+
+        async function performSearch(file) {
+            const formData = new FormData();
+            formData.append('image', file);
+
+            const resultsArea = document.getElementById('resultsArea');
+            const resultsGrid = document.getElementById('resultsGrid');
+            resultsArea.classList.remove('hidden');
+            resultsGrid.innerHTML = '<div class="col-span-full text-center py-8">Searching...</div>';
+
+            try {
+                const res = await fetch('/api/search', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    renderResults(data.results);
+                } else {
+                    resultsGrid.innerHTML = `<div class="col-span-full text-red-500 text-center">Error: ${data.message}</div>`;
+                }
+            } catch (e) {
+                resultsGrid.innerHTML = `<div class="col-span-full text-red-500 text-center">Error: ${e.message}</div>`;
+            }
+        }
+
+        function renderResults(results) {
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '';
+            
+            if (results.length === 0) {
+                grid.innerHTML = '<div class="col-span-full text-center text-gray-500">No similar images found.</div>';
+                return;
+            }
+
+            results.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'group relative aspect-square bg-gray-200 rounded-lg overflow-hidden cursor-pointer hover:shadow-lg transition';
+                
+                // Path handling: /images/relative/path/to/img.jpg
+                // We need to encode the path properly
+                const encodedPath = encodeURIComponent(item.path).replace(/%2F/g, '/'); // simple fix, but better use standard encoding
+                // Actually flask route is /images/<path:filename>
+                // So we just need to join it.
+                // But wait, item.path is relative path like "folder/img.jpg".
+                // If we put /images/folder/img.jpg, it should work.
+                
+                div.innerHTML = `
+                    <img src="/images/${item.path}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" loading="lazy">
+                    <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-2 opacity-0 group-hover:opacity-100 transition">
+                        <div class="truncate">${item.path}</div>
+                        <div>Score: ${item.score.toFixed(4)}</div>
+                    </div>
+                `;
+                grid.appendChild(div);
+            });
+        }
+    </script>
+</body>
+</html>
