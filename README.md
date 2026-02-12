@@ -122,13 +122,3 @@ python app.py
 ---
 
 <<<<<<< HEAD
-============
-
->>>>>>> cfa571df2f7359b3b75ba7613f6007002171f5af
->>>>>>> *Created with ❤️ by Trae AI Assistant*
->>>>>>>
->>>>>>
->>>>>
->>>>
->>>
->>
